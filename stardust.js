@@ -71,7 +71,7 @@ function init() {
     geometry.setAttribute('originalPosition', new THREE.BufferAttribute(originalPositions, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 3,
+        size: 2,
         vertexColors: true,
         transparent: true,
         opacity: 0.8
