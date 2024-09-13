@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bigcloud</title>
+    <title>Stardust</title>
     <style>
         body, html {
             margin: 0;
@@ -17,18 +17,32 @@
     </style>
 </head>
 <body>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.159.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.159.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
         let scene, camera, renderer, particles;
-        const particleCount = 20000;
-        let interactionRadius = 15;
-        const maxInteractionTime = 15000; // 15 seconds in milliseconds
+        let composer, bloomPass;
+        const particleCount = 2000;
+        let interactionRadius = 10;
+        const maxInteractionTime = 10000; // 10 seconds in milliseconds
         let mouse = new THREE.Vector2();
         let prevMouse = new THREE.Vector2();
         let isInteracting = false;
         let interactionStartTime = 0;
         let particleStates = [];
         let particleVelocities = [];
+        let particleBrightness = [];
         const dragFactor = 0.98;
         const flickSpeed = 5;
 
@@ -48,6 +62,19 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
+            // Set up post-processing
+            composer = new EffectComposer(renderer);
+            const renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                1.5,  // bloom strength
+                0.4,  // bloom radius
+                0.85  // bloom threshold
+            );
+            composer.addPass(bloomPass);
+
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(particleCount * 3);
             const colors = new Float32Array(particleCount * 3);
@@ -59,10 +86,12 @@
                 positions[i3 + 1] = originalPositions[i3 + 1] = Math.random() * window.innerHeight - window.innerHeight / 2;
                 positions[i3 + 2] = originalPositions[i3 + 2] = 0;
 
-                colors[i3] = colors[i3 + 1] = colors[i3 + 2] = 1;
+                const brightness = Math.random();
+                colors[i3] = colors[i3 + 1] = colors[i3 + 2] = brightness;
 
                 particleStates.push('free');
                 particleVelocities.push(new THREE.Vector2(0, 0));
+                particleBrightness.push(brightness);
             }
 
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -70,7 +99,7 @@
             geometry.setAttribute('originalPosition', new THREE.BufferAttribute(originalPositions, 3));
 
             const material = new THREE.PointsMaterial({
-                size: 2,
+                size: 3,
                 vertexColors: true,
                 transparent: true,
                 opacity: 0.8
@@ -100,6 +129,7 @@
 
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
 
             const positions = particles.geometry.attributes.position.array;
             const originalPositions = particles.geometry.attributes.originalPosition.array;
@@ -210,6 +240,7 @@
 
         function updateParticles() {
             const positions = particles.geometry.attributes.position.array;
+            const colors = particles.geometry.attributes.color.array;
             const halfWidth = window.innerWidth / 2;
             const halfHeight = window.innerHeight / 2;
 
@@ -248,9 +279,15 @@
                     positions[i3] = Math.max(Math.min(positions[i3], halfWidth), -halfWidth);
                     positions[i3 + 1] = Math.max(Math.min(positions[i3 + 1], halfHeight), -halfHeight);
                 }
+
+                // Twinkling effect
+                particleBrightness[i] += (Math.random() - 0.5) * 0.1;
+                particleBrightness[i] = Math.max(0, Math.min(1, particleBrightness[i]));
+                colors[i3] = colors[i3 + 1] = colors[i3 + 2] = particleBrightness[i];
             }
 
             particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
         }
 
         function animate() {
@@ -262,7 +299,7 @@
 
             updateParticles();
 
-            renderer.render(scene, camera);
+            composer.render();
         }
 
         init();
