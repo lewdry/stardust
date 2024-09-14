@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+//import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 let scene, camera, renderer, particles;
 let composer, bloomPass;
-const particleCount = 3000;
+const particleCount = 5000;
 let interactionRadius = 10;
 const maxInteractionTime = 10000; // 10 seconds in milliseconds
 let mouse = new THREE.Vector2();
@@ -39,13 +39,13 @@ function init() {
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(window.innerWidth, window.innerHeight),
-        3,  // bloom strength
-        0.5,  // bloom radius
-        0.85  // bloom threshold
-    );
-    composer.addPass(bloomPass);
+    //bloomPass = new UnrealBloomPass(
+    //    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    //    10,  // bloom strength
+    //    10,  // bloom radius
+    //    1  // bloom threshold
+    //);
+    //composer.addPass(bloomPass);
 
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
@@ -71,7 +71,7 @@ function init() {
     geometry.setAttribute('originalPosition', new THREE.BufferAttribute(originalPositions, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 2,
+        size: 3,
         vertexColors: true,
         transparent: true,
         opacity: 0.8
