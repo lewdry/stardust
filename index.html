@@ -3,29 +3,271 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stardust</title>
-    <link rel="apple-touch-icon" href="star.png">
+    <title>Optimized Stars Animation with GSAP and Canvas - Family Edition</title>
     <style>
         body, html {
             margin: 0;
             padding: 0;
+            width: 100%;
+            height: 100%;
             overflow: hidden;
             background-color: black;
         }
-        canvas {
-            display: block;
+        #starfield {
+            width: 100%;
+            height: 100%;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.5/gsap.min.js"></script>
 </head>
 <body>
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.159.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.159.0/examples/jsm/"
+    <canvas id="starfield"></canvas>
+
+    <script>
+        const particleCount = 5000;
+        let interactionRadius = 10;
+        const maxInteractionTime = 10000; // 10 seconds in milliseconds
+        let mouse = { x: 0, y: 0 };
+        let prevMouse = { x: 0, y: 0 };
+        let isInteracting = false;
+        let interactionStartTime = 0;
+        const dragFactor = 0.98;
+        const flickSpeed = 5;
+
+        let particles = [];
+        let canvas, ctx;
+
+        // Define family members' colors
+        const familyColors = [
+            { name: 'Daisy', color: 'rgb(224, 150, 205)' },
+            { name: 'Elliot', color: 'rgb(161, 216, 230)' },
+            { name: 'Cassie', color: 'rgb(209, 160, 242)' },
+            { name: 'Lewis', color: 'rgb(250, 166, 117)' }
+        ];
+
+        function init() {
+            canvas = document.getElementById('starfield');
+            ctx = canvas.getContext('2d');
+
+            resizeCanvas();
+
+            // Create family member particles
+            familyColors.forEach(member => {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    state: 'free',
+                    velocity: { x: 0, y: 0 },
+                    brightness: 1,
+                    color: member.color,
+                    name: member.name,
+                    size: 4 // Larger size for family members
+                });
+            });
+
+            // Create remaining particles
+            for (let i = 0; i < particleCount - familyColors.length; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    state: 'free',
+                    velocity: { x: 0, y: 0 },
+                    brightness: Math.random(),
+                    color: 'white',
+                    size: 1
+                });
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            canvas.addEventListener('mousedown', onInteractionStart);
+            canvas.addEventListener('mouseup', onInteractionEnd);
+            canvas.addEventListener('mousemove', onMouseMove);
+            canvas.addEventListener('touchstart', onInteractionStart);
+            canvas.addEventListener('touchend', onInteractionEnd);
+            canvas.addEventListener('touchmove', onTouchMove);
+
+            gsap.ticker.add(updateAndRender);
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            particles.forEach(particle => {
+                particle.x = Math.random() * canvas.width;
+                particle.y = Math.random() * canvas.height;
+                particle.state = 'free';
+                particle.velocity = { x: 0, y: 0 };
+            });
+        }
+
+        function onInteractionStart(event) {
+            isInteracting = true;
+            interactionStartTime = Date.now();
+            prevMouse = { ...mouse };
+            updateMousePosition(event);
+            flickParticles();
+        }
+
+        function onInteractionEnd() {
+            isInteracting = false;
+            interactionStartTime = 0;
+            interactionRadius = 15; // Reset to initial radius
+        }
+
+        function onMouseMove(event) {
+            prevMouse = { ...mouse };
+            updateMousePosition(event);
+            if (isInteracting) {
+                flickParticles();
             }
         }
+
+        function onTouchMove(event) {
+            prevMouse = { ...mouse };
+            updateTouchPosition(event);
+            if (isInteracting) {
+                flickParticles();
+            }
+        }
+
+        function updateMousePosition(event) {
+            mouse.x = event.clientX;
+            mouse.y = event.clientY;
+        }
+
+        function updateTouchPosition(event) {
+            if (event.touches.length > 0) {
+                mouse.x = event.touches[0].clientX;
+                mouse.y = event.touches[0].clientY;
+            }
+        }
+
+        function getDynamicInteractionRadius() {
+            const elapsedTime = Math.min(Date.now() - interactionStartTime, maxInteractionTime);
+            const progress = elapsedTime / maxInteractionTime;
+            const maxRadius = Math.min(canvas.width, canvas.height) / 2;
+            return 15 + (maxRadius - 15) * progress;
+        }
+
+        function attractParticles() {
+            const currentRadius = getDynamicInteractionRadius();
+            const particlesToAttract = Math.floor(particleCount * 0.001);
+            let attractedCount = 0;
+
+            particles.forEach(particle => {
+                if (particle.state !== 'free') return;
+
+                const distance = Math.sqrt(Math.pow(particle.x - mouse.x, 2) + Math.pow(particle.y - mouse.y, 2));
+
+                if (distance <= currentRadius) {
+                    if (attractedCount < particlesToAttract) {
+                        particle.state = 'attracted';
+                        attractedCount++;
+                    }
+                }
+            });
+        }
+
+        function flickParticles() {
+            const mouseVelocity = {
+                x: mouse.x - prevMouse.x,
+                y: mouse.y - prevMouse.y
+            };
+
+            particles.forEach(particle => {
+                if (particle.state !== 'attracted') return;
+
+                const distance = Math.sqrt(Math.pow(particle.x - mouse.x, 2) + Math.pow(particle.y - mouse.y, 2));
+
+                if (distance <= 5) {
+                    const angle = Math.atan2(mouseVelocity.y, mouseVelocity.x) + (Math.random() - 0.5) * Math.PI / 9;
+                    const speed = Math.sqrt(Math.pow(mouseVelocity.x, 2) + Math.pow(mouseVelocity.y, 2)) * flickSpeed;
+                    particle.velocity = {
+                        x: Math.cos(angle) * speed,
+                        y: Math.sin(angle) * speed
+                    };
+                    particle.state = 'flicked';
+                }
+            });
+        }
+
+        function updateAndRender() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            let allAligned = true;
+            const firstParticle = particles[0];
+
+            particles.forEach(particle => {
+                if (particle.state === 'attracted') {
+                    particle.x += (mouse.x - particle.x) * 0.1;
+                    particle.y += (mouse.y - particle.y) * 0.1;
+                } else if (particle.state === 'flicked') {
+                    particle.x += particle.velocity.x;
+                    particle.y += particle.velocity.y;
+
+                    // Bounce off edges
+                    if (particle.x < 0 || particle.x > canvas.width) {
+                        particle.velocity.x *= -1;
+                    }
+                    if (particle.y < 0 || particle.y > canvas.height) {
+                        particle.velocity.y *= -1;
+                    }
+
+                    // Apply drag
+                    particle.velocity.x *= dragFactor;
+                    particle.velocity.y *= dragFactor;
+
+                    // If particle has slowed down significantly, set it free
+                    if (Math.abs(particle.velocity.x) < 0.1 && Math.abs(particle.velocity.y) < 0.1) {
+                        particle.state = 'free';
+                        particle.velocity = { x: 0, y: 0 };
+                    }
+                } else {
+                    // Free particles
+                    particle.x += (Math.random() - 0.5) * 0.005;
+                    particle.y += (Math.random() - 0.5) * 0.005;
+                    particle.x = Math.max(0, Math.min(particle.x, canvas.width));
+                    particle.y = Math.max(0, Math.min(particle.y, canvas.height));
+                }
+
+                // Twinkling effect (only for non-family particles)
+                if (!particle.name) {
+                    particle.brightness += (Math.random() - 0.5) * 0.1;
+                    particle.brightness = Math.max(0, Math.min(1, particle.brightness));
+                }
+
+                // Check alignment
+                if (Math.abs(particle.x - firstParticle.x) > 1 || Math.abs(particle.y - firstParticle.y) > 1) {
+                    allAligned = false;
+                }
+
+                // Draw particle
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                if (particle.name) {
+                    // Family member particle
+                    ctx.fillStyle = particle.color;
+                } else {
+                    // Regular particle
+                    ctx.fillStyle = `rgba(255, 255, 255, ${particle.brightness})`;
+                }
+                ctx.fill();
+            });
+
+            // Change background and particle colors if aligned
+            if (allAligned) {
+                canvas.style.backgroundColor = 'white';
+                ctx.fillStyle = 'black';
+            } else {
+                canvas.style.backgroundColor = 'black';
+            }
+
+            if (isInteracting) {
+                attractParticles();
+            }
+        }
+
+        init();
     </script>
-    <script type="module" src="stardust.js"></script>
 </body>
 </html>
