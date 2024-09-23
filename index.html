@@ -13,7 +13,7 @@
             overflow: hidden;
             background-color: black;
         }
-        #starfield {
+        #stardust {
             width: 100%;
             height: 100%;
             display: block;
@@ -22,7 +22,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.5/gsap.min.js"></script>
 </head>
 <body>
-    <canvas id="starfield"></canvas>
+    <canvas id="stardust"></canvas>
 
     <script>
         const particleCount = 5000;
@@ -36,6 +36,7 @@
         const flickSpeed = 5;
 
         let particles = [];
+        let familyParticles = []; // Array to store family particles separately
         let canvas, ctx;
         let dpr, scale;  // Device pixel ratio and scale factor
 
@@ -48,7 +49,7 @@
         ];
 
         function init() {
-            canvas = document.getElementById('starfield');
+            canvas = document.getElementById('stardust');
             ctx = canvas.getContext('2d');
 
             // Get the device pixel ratio and scale
@@ -59,7 +60,7 @@
 
             // Create family member particles
             familyColors.forEach(member => {
-                particles.push({
+                const particle = {
                     x: Math.random() * canvas.width,
                     y: Math.random() * canvas.height,
                     state: 'free',
@@ -68,7 +69,9 @@
                     color: member.color,
                     name: member.name,
                     size: 4 * dpr // Adjust size for high DPI
-                });
+                };
+                particles.push(particle);
+                familyParticles.push(particle); // Add to family array
             });
 
             // Create remaining particles
@@ -161,11 +164,16 @@
         }
 
         function getDynamicInteractionRadius() {
-            const elapsedTime = Math.min(Date.now() - interactionStartTime, maxInteractionTime);
-            const progress = elapsedTime / maxInteractionTime;
-            const maxRadius = Math.min(canvas.width, canvas.height) / 2;
-            return (15 + (maxRadius - 15) * progress) * dpr;
+        const elapsedTime = Math.min(Date.now() - interactionStartTime, maxInteractionTime);
+        const progress = elapsedTime / maxInteractionTime;
+
+        // Correctly calculate the max radius using logical pixels
+        const maxRadius = Math.min(canvas.width / dpr, canvas.height / dpr) / 2; // Divide by dpr here
+
+        // Return the radius adjusted for DPR
+        return (15 + (maxRadius - 15) * progress) * dpr;
         }
+
 
         function attractParticles() {
             const currentRadius = getDynamicInteractionRadius();
@@ -210,97 +218,82 @@
         }
 
         function updateAndRender() {
-    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-    
-    let allAligned = true;
-    const firstParticle = particles[0];
+            ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
-    particles.forEach(particle => {
-        if (particle.state === 'attracted') {
-            particle.x += (mouse.x - particle.x) * 0.1;
-            particle.y += (mouse.y - particle.y) * 0.1;
-        } else if (particle.state === 'flicked') {
-            particle.x += particle.velocity.x;
-            particle.y += particle.velocity.y;
-
-            // Bounce off edges, accounting for particle size
-            if (particle.x - particle.size < 0 || particle.x + particle.size > canvas.width) {
-                particle.velocity.x *= -1;
-                particle.x = Math.max(particle.size, Math.min(particle.x, canvas.width - particle.size));
-            }
-            if (particle.y - particle.size < 0 || particle.y + particle.size > canvas.height) {
-                particle.velocity.y *= -1;
-                particle.y = Math.max(particle.size, Math.min(particle.y, canvas.height - particle.size));
-            }
-
-            // Apply drag
-            particle.velocity.x *= dragFactor;
-            particle.velocity.y *= dragFactor;
-
-            // If particle has slowed down significantly, set it free
-            if (Math.abs(particle.velocity.x) < 0.1 * dpr && Math.abs(particle.velocity.y) < 0.1 * dpr) {
-                particle.state = 'free';
-                particle.velocity = { x: 0, y: 0 };
-            }
-        } else {
-            // Free particles
-            particle.x += (Math.random() - 0.5) * 0.005 * dpr;
-            particle.y += (Math.random() - 0.5) * 0.005 * dpr;
-            // Constrain particles within the canvas, accounting for particle size
-            particle.x = Math.max(particle.size, Math.min(particle.x, canvas.width - particle.size));
-            particle.y = Math.max(particle.size, Math.min(particle.y, canvas.height - particle.size));
-        }
-
-                // Twinkling effect (only for non-family particles)
+            // Draw non-family particles first
+            particles.forEach(particle => {
                 if (!particle.name) {
-                    particle.brightness += (Math.random() - 0.5) * 0.1;
-                    particle.brightness = Math.max(0, Math.min(1, particle.brightness));
+                    // Draw and update non-family particles
+                    updateParticle(particle);
+                    drawParticle(particle);
                 }
-
-                // Check alignment
-                if (Math.abs(particle.x - firstParticle.x) > 1 * dpr || Math.abs(particle.y - firstParticle.y) > 1 * dpr) {
-                    allAligned = false;
-                }
-
-                // Draw particle
-                ctx.beginPath();
-                ctx.arc(particle.x / dpr, particle.y / dpr, particle.size / dpr, 0, Math.PI * 2);
-                if (particle.name) {
-                    // Family member particle
-                    ctx.fillStyle = particle.color;
-                } else {
-                    // Regular particle
-                    ctx.fillStyle = `rgba(255, 255, 255, ${particle.brightness})`;
-                }
-                ctx.fill();
             });
 
-            // Change background and particle colors if aligned
-            if (allAligned) {
-                canvas.style.backgroundColor = 'white';
-                ctx.fillStyle = 'black';
-                window.allAlignedToggled = true;
-
-                // Set non-family particles to black with twinkling
-                particles.forEach(particle => {
-                    if (!particle.name) {
-                        particle.color = 'rgba(0, 0, 0, ' + particle.brightness + ')';
-                    }
-                });
-            } else if (!window.allAlignedToggled) {
-                canvas.style.backgroundColor = 'black';
-
-                // Reset non-family particles to white
-                particles.forEach(particle => {
-                    if (!particle.name) {
-                        particle.color = 'white';
-                    }
-                });
-            }
+            // Draw family particles on top
+            familyParticles.forEach(particle => {
+                updateParticle(particle);
+                drawParticle(particle);
+            });
 
             if (isInteracting) {
                 attractParticles();
             }
+        }
+
+        function updateParticle(particle) {
+            if (particle.state === 'attracted') {
+                particle.x += (mouse.x - particle.x) * 0.1;
+                particle.y += (mouse.y - particle.y) * 0.1;
+            } else if (particle.state === 'flicked') {
+                particle.x += particle.velocity.x;
+                particle.y += particle.velocity.y;
+
+                // Bounce off edges, accounting for particle size
+                if (particle.x - particle.size < 0 || particle.x + particle.size > canvas.width) {
+                    particle.velocity.x *= -1;
+                    particle.x = Math.max(particle.size, Math.min(particle.x, canvas.width - particle.size));
+                }
+                if (particle.y - particle.size < 0 || particle.y + particle.size > canvas.height) {
+                    particle.velocity.y *= -1;
+                    particle.y = Math.max(particle.size, Math.min(particle.y, canvas.height - particle.size));
+                }
+
+                // Apply drag
+                particle.velocity.x *= dragFactor;
+                particle.velocity.y *= dragFactor;
+
+                // If particle has slowed down significantly, set it free
+                if (Math.abs(particle.velocity.x) < 0.1 * dpr && Math.abs(particle.velocity.y) < 0.1 * dpr) {
+                    particle.state = 'free';
+                    particle.velocity = { x: 0, y: 0 };
+                }
+            } else {
+                // Free particles
+                particle.x += (Math.random() - 0.5) * 0.005 * dpr;
+                particle.y += (Math.random() - 0.5) * 0.005 * dpr;
+                // Constrain particles within the canvas, accounting for particle size
+                particle.x = Math.max(particle.size, Math.min(particle.x, canvas.width - particle.size));
+                particle.y = Math.max(particle.size, Math.min(particle.y, canvas.height - particle.size));
+            }
+
+            // Twinkling effect (only for non-family particles)
+            if (!particle.name) {
+                particle.brightness += (Math.random() - 0.5) * 0.1;
+                particle.brightness = Math.max(0, Math.min(1, particle.brightness));
+            }
+        }
+
+        function drawParticle(particle) {
+            ctx.beginPath();
+            ctx.arc(particle.x / dpr, particle.y / dpr, particle.size / dpr, 0, Math.PI * 2);
+            if (particle.name) {
+                // Family member particle
+                ctx.fillStyle = particle.color;
+            } else {
+                // Regular particle
+                ctx.fillStyle = `rgba(255, 255, 255, ${particle.brightness})`;
+            }
+            ctx.fill();
         }
 
         init();
