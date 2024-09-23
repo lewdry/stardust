@@ -19,7 +19,6 @@
             display: block;
         }
     </style>
-    <script src="/gsap.min.js"></script>
 </head>
 <body>
     <canvas id="stardust"></canvas>
@@ -95,7 +94,8 @@
             canvas.addEventListener('touchend', onInteractionEnd);
             canvas.addEventListener('touchmove', onTouchMove);
 
-            gsap.ticker.add(updateAndRender);
+            // Start the animation loop
+            requestAnimationFrame(updateAndRender);
         }
 
         function resizeCanvas() {
@@ -164,16 +164,15 @@
         }
 
         function getDynamicInteractionRadius() {
-        const elapsedTime = Math.min(Date.now() - interactionStartTime, maxInteractionTime);
-        const progress = elapsedTime / maxInteractionTime;
+            const elapsedTime = Math.min(Date.now() - interactionStartTime, maxInteractionTime);
+            const progress = elapsedTime / maxInteractionTime;
 
-        // Correctly calculate the max radius using logical pixels
-        const maxRadius = Math.min(canvas.width / dpr, canvas.height / dpr) / 2; // Divide by dpr here
+            // Correctly calculate the max radius using logical pixels
+            const maxRadius = Math.min(canvas.width / dpr, canvas.height / dpr) / 2; // Divide by dpr here
 
-        // Return the radius adjusted for DPR
-        return (15 + (maxRadius - 15) * progress) * dpr;
+            // Return the radius adjusted for DPR
+            return (15 + (maxRadius - 15) * progress) * dpr;
         }
-
 
         function attractParticles() {
             const currentRadius = getDynamicInteractionRadius();
@@ -238,6 +237,9 @@
             if (isInteracting) {
                 attractParticles();
             }
+
+            // Continue the animation loop
+            requestAnimationFrame(updateAndRender);
         }
 
         function updateParticle(particle) {
