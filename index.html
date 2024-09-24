@@ -37,7 +37,7 @@
         let particles = [];
         let familyParticles = []; // Array to store family particles separately
         let canvas, ctx;
-        let dpr, scale;  // Device pixel ratio and scale factor
+        let dpr, scale;  // Device pixel ratio and scale
 
         // Define family members' colors
         const familyColors = [
@@ -67,7 +67,7 @@
                     brightness: 1,
                     color: member.color,
                     name: member.name,
-                    size: 4 * dpr // Adjust size for high DPI
+                    size: 3 * dpr // Adjust size for high DPI
                 };
                 particles.push(particle);
                 familyParticles.push(particle); // Add to family array
@@ -122,6 +122,7 @@
         }
 
         function onInteractionStart(event) {
+            event.preventDefault(); // Prevent default touch behavior
             isInteracting = true;
             interactionStartTime = Date.now();
             prevMouse = { ...mouse };
@@ -129,7 +130,8 @@
             flickParticles();
         }
 
-        function onInteractionEnd() {
+        function onInteractionEnd(event) {
+            event.preventDefault(); // Prevent default touch behavior
             isInteracting = false;
             interactionStartTime = 0;
             interactionRadius = 10 * dpr; // Reset to initial radius, adjusted for DPI
@@ -144,6 +146,7 @@
         }
 
         function onTouchMove(event) {
+            event.preventDefault(); // Prevent default touch behavior
             prevMouse = { ...mouse };
             updateTouchPosition(event);
             if (isInteracting) {
@@ -152,8 +155,8 @@
         }
 
         function updateMousePosition(event) {
-            mouse.x = event.clientX * dpr;
-            mouse.y = event.clientY * dpr;
+            mouse.x = (event.clientX || event.touches[0].clientX) * dpr;
+            mouse.y = (event.clientY || event.touches[0].clientY) * dpr;
         }
 
         function updateTouchPosition(event) {
