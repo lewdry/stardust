@@ -73,13 +73,17 @@ function init() {
 }
 
 function resizeCanvas() {
-    // Set canvas size accounting for device pixel ratio
-    canvas.width = window.innerWidth * dpr;
-    canvas.height = window.innerHeight * dpr;
+    // Get the visible viewport dimensions
+    const visibleWidth = document.documentElement.clientWidth;
+    const visibleHeight = window.innerHeight;
+
+    // Set canvas size accounting for device pixel ratio and visible area
+    canvas.width = visibleWidth * dpr;
+    canvas.height = visibleHeight * dpr;
     
     // Scale the canvas back down with CSS
-    canvas.style.width = `${window.innerWidth}px`;
-    canvas.style.height = `${window.innerHeight}px`;
+    canvas.style.width = `${visibleWidth}px`;
+    canvas.style.height = `${visibleHeight}px`;
 
     // Scale the context to ensure correct drawing operations
     ctx.scale(dpr, dpr);
@@ -87,6 +91,7 @@ function resizeCanvas() {
     // Adjust interaction radius for high DPI
     interactionRadius = 15 * dpr;
 
+    // Reposition particles within the new visible area
     particles.forEach(particle => {
         particle.x = Math.random() * canvas.width;
         particle.y = Math.random() * canvas.height;
@@ -129,14 +134,16 @@ function onTouchMove(event) {
 }
 
 function updateMousePosition(event) {
-    mouse.x = (event.clientX || event.touches[0].clientX) * dpr;
-    mouse.y = (event.clientY || event.touches[0].clientY) * dpr;
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = (event.clientX - rect.left) * dpr;
+    mouse.y = (event.clientY - rect.top) * dpr;
 }
 
 function updateTouchPosition(event) {
     if (event.touches.length > 0) {
-        mouse.x = event.touches[0].clientX * dpr;
-        mouse.y = event.touches[0].clientY * dpr;
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = (event.touches[0].clientX - rect.left) * dpr;
+        mouse.y = (event.touches[0].clientY - rect.top) * dpr;
     }
 }
 
