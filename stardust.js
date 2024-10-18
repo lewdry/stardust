@@ -7,6 +7,7 @@ let isInteracting = false;
 let interactionStartTime = 0;
 const dragFactor = 0.98;
 const flickSpeed = 5;
+const EDGE_BUFFER = 1; // 1px buffer from edges
 
 let particles = [];
 let familyParticles = []; // Array to store family particles separately
@@ -133,17 +134,46 @@ function onTouchMove(event) {
     }
 }
 
+function isPositionInBounds(x, y) {
+    return x >= EDGE_BUFFER * dpr && 
+           x <= (canvas.width - EDGE_BUFFER * dpr) && 
+           y >= EDGE_BUFFER * dpr && 
+           y <= (canvas.height - EDGE_BUFFER * dpr);
+}
+
+function constrainToCanvas(value, max) {
+    return Math.max(EDGE_BUFFER * dpr, Math.min(value, max - EDGE_BUFFER * dpr));
+}
+
 function updateMousePosition(event) {
     const rect = canvas.getBoundingClientRect();
-    mouse.x = (event.clientX - rect.left) * dpr;
-    mouse.y = (event.clientY - rect.top) * dpr;
+    const rawX = (event.clientX - rect.left) * dpr;
+    const rawY = (event.clientY - rect.top) * dpr;
+    
+    // Only update mouse position if it's within bounds
+    if (isPositionInBounds(rawX, rawY)) {
+        mouse.x = constrainToCanvas(rawX, canvas.width);
+        mouse.y = constrainToCanvas(rawY, canvas.height);
+    } else {
+        // If touch/mouse goes out of bounds, end the interaction
+        onInteractionEnd(event);
+    }
 }
 
 function updateTouchPosition(event) {
     if (event.touches.length > 0) {
         const rect = canvas.getBoundingClientRect();
-        mouse.x = (event.touches[0].clientX - rect.left) * dpr;
-        mouse.y = (event.touches[0].clientY - rect.top) * dpr;
+        const rawX = (event.touches[0].clientX - rect.left) * dpr;
+        const rawY = (event.touches[0].clientY - rect.top) * dpr;
+        
+        // Only update touch position if it's within bounds
+        if (isPositionInBounds(rawX, rawY)) {
+            mouse.x = constrainToCanvas(rawX, canvas.width);
+            mouse.y = constrainToCanvas(rawY, canvas.height);
+        } else {
+            // If touch goes out of bounds, end the interaction
+            onInteractionEnd(event);
+        }
     }
 }
 
@@ -231,17 +261,20 @@ function updateParticle(particle) {
         particle.x += (mouse.x - particle.x) * 0.1;
         particle.y += (mouse.y - particle.y) * 0.1;
     } else if (particle.state === 'flicked') {
+        // Update position
         particle.x += particle.velocity.x;
         particle.y += particle.velocity.y;
 
-        // Bounce off edges, accounting for particle size
-        if (particle.x - particle.size < 0 || particle.x + particle.size > canvas.width) {
+        // Constrain to canvas with buffer
+        particle.x = constrainToCanvas(particle.x, canvas.width);
+        particle.y = constrainToCanvas(particle.y, canvas.height);
+
+        // Bounce off edges
+        if (particle.x <= EDGE_BUFFER * dpr || particle.x >= canvas.width - EDGE_BUFFER * dpr) {
             particle.velocity.x *= -1;
-            particle.x = Math.max(particle.size, Math.min(particle.x, canvas.width - particle.size));
         }
-        if (particle.y - particle.size < 0 || particle.y + particle.size > canvas.height) {
+        if (particle.y <= EDGE_BUFFER * dpr || particle.y >= canvas.height - EDGE_BUFFER * dpr) {
             particle.velocity.y *= -1;
-            particle.y = Math.max(particle.size, Math.min(particle.y, canvas.height - particle.size));
         }
 
         // Apply drag
@@ -257,9 +290,9 @@ function updateParticle(particle) {
         // Free particles
         particle.x += (Math.random() - 0.5) * 0.005 * dpr;
         particle.y += (Math.random() - 0.5) * 0.005 * dpr;
-        // Constrain particles within the canvas, accounting for particle size
-        particle.x = Math.max(particle.size, Math.min(particle.x, canvas.width - particle.size));
-        particle.y = Math.max(particle.size, Math.min(particle.y, canvas.height - particle.size));
+        // Constrain particles within the canvas with buffer
+        particle.x = constrainToCanvas(particle.x, canvas.width);
+        particle.y = constrainToCanvas(particle.y, canvas.height);
     }
 
     // Twinkling effect (only for non-family particles)
