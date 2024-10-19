@@ -102,12 +102,31 @@ function resizeCanvas() {
 }
 
 function onInteractionStart(event) {
-    event.preventDefault(); // Prevent default touch behavior
-    isInteracting = true;
-    interactionStartTime = Date.now();
-    prevMouse = { ...mouse };
-    updateMousePosition(event);
-    flickParticles();
+    // Check if it's a touch event
+    if (event.touches) {
+        // For touch events, only prevent default if the touch is within bounds
+        const rect = canvas.getBoundingClientRect();
+        const touch = event.touches[0];
+        const rawX = (touch.clientX - rect.left) * dpr;
+        const rawY = (touch.clientY - rect.top) * dpr;
+        
+        if (isPositionInBounds(rawX, rawY)) {
+            event.preventDefault();
+            isInteracting = true;
+            interactionStartTime = Date.now();
+            prevMouse = { ...mouse };
+            updateTouchPosition(event);
+            flickParticles();
+        }
+    } else {
+        // For mouse events, keep the original behavior
+        event.preventDefault();
+        isInteracting = true;
+        interactionStartTime = Date.now();
+        prevMouse = { ...mouse };
+        updateMousePosition(event);
+        flickParticles();
+    }
 }
 
 function onInteractionEnd(event) {
@@ -126,7 +145,9 @@ function onMouseMove(event) {
 }
 
 function onTouchMove(event) {
-    event.preventDefault(); // Prevent default touch behavior
+    if (isInteracting) {
+        event.preventDefault();
+    }
     prevMouse = { ...mouse };
     updateTouchPosition(event);
     if (isInteracting) {
@@ -135,10 +156,13 @@ function onTouchMove(event) {
 }
 
 function isPositionInBounds(x, y) {
-    return x >= EDGE_BUFFER * dpr && 
-           x <= (canvas.width - EDGE_BUFFER * dpr) && 
-           y >= EDGE_BUFFER * dpr && 
-           y <= (canvas.height - EDGE_BUFFER * dpr);
+    const buffer = EDGE_BUFFER * dpr;
+    const touchBuffer = 5 * dpr; // Add extra tolerance for touch events
+    
+    return x >= (buffer - touchBuffer) && 
+           x <= (canvas.width - buffer + touchBuffer) && 
+           y >= (buffer - touchBuffer) && 
+           y <= (canvas.height - buffer + touchBuffer);
 }
 
 function constrainToCanvas(value, max) {
@@ -163,16 +187,23 @@ function updateMousePosition(event) {
 function updateTouchPosition(event) {
     if (event.touches.length > 0) {
         const rect = canvas.getBoundingClientRect();
-        const rawX = (event.touches[0].clientX - rect.left) * dpr;
-        const rawY = (event.touches[0].clientY - rect.top) * dpr;
+        const touch = event.touches[0];
         
-        // Only update touch position if it's within bounds
-        if (isPositionInBounds(rawX, rawY)) {
+        // Calculate position in canvas space
+        const rawX = (touch.clientX - rect.left) * dpr;
+        const rawY = (touch.clientY - rect.top) * dpr;
+        
+        // Add some tolerance for touch events (5px buffer)
+        const touchBuffer = 5 * dpr;
+        
+        if (rawX >= -touchBuffer && 
+            rawX <= canvas.width + touchBuffer && 
+            rawY >= -touchBuffer && 
+            rawY <= canvas.height + touchBuffer) {
+            
+            // Constrain the actual position to within the canvas
             mouse.x = constrainToCanvas(rawX, canvas.width);
             mouse.y = constrainToCanvas(rawY, canvas.height);
-        } else {
-            // If touch goes out of bounds, end the interaction
-            onInteractionEnd(event);
         }
     }
 }
