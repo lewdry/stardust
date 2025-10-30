@@ -1,19 +1,24 @@
-// Configuration constants
-const particleCount = 5000;
-const BASE_INTERACTION_RADIUS = 15;
+// Device detection
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
+    || ('ontouchstart' in window) 
+    || (navigator.maxTouchPoints > 0);
+
+// Configuration constants - optimized for device type
+const particleCount = isMobile ? 3000 : 5000; // Further reduced particle count for mobile
+const BASE_INTERACTION_RADIUS = isMobile ? 10 : 15; // Smaller interaction radius on mobile
 const maxInteractionTime = 10000; // 10 seconds in milliseconds
 const dragFactor = 0.98;
 const flickSpeed = 5;
 const EDGE_BUFFER = 1; // 1px buffer from edges
-const BLOOM_RADIUS_OFFSET = 6; // Additional bloom radius for family particles
 const ATTRACTION_SPEED = 0.1;
-const PARTICLE_DRIFT_SPEED = 0.005;
+const PARTICLE_DRIFT_SPEED = isMobile ? 0.004 : 0.005; // Slightly reduced drift on mobile
 const FLICK_DISTANCE_THRESHOLD = 5;
 const VELOCITY_THRESHOLD = 0.1;
+const VELOCITY_THRESHOLD_SQUARED = VELOCITY_THRESHOLD * VELOCITY_THRESHOLD;
 const FAMILY_PARTICLE_SIZE = 3;
 const REGULAR_PARTICLE_SIZE = 1;
 const TOUCH_BUFFER = 5; // Extra tolerance for touch events
-const ATTRACTION_PERCENTAGE = 0.001; // Percentage of particles to attract
+const ATTRACTION_PERCENTAGE = 0.001;
 
 // Runtime variables
 let interactionRadius = BASE_INTERACTION_RADIUS;
@@ -22,17 +27,27 @@ let prevMouse = { x: 0, y: 0 };
 let isInteracting = false;
 let interactionStartTime = 0;
 
+// Adaptive frame rate control
+let lastFrameTime = 0;
+let frameCount = 0;
+let performanceMonitorTime = 0;
+let adaptiveFrameSkip = false;
+
+// Start with full frame rate, adapt based on performance
+const baseFrameInterval = 1000 / 60; // Target 60fps initially
+let currentFrameInterval = baseFrameInterval;
+
 let particles = [];
 let familyParticles = []; // Array to store family particles separately
 let canvas, ctx;
 let dpr, scale;  // Device pixel ratio and scale
 
-// Define family members' colors
+// Define family members' colors with pre-parsed RGB values
 const familyColors = [
-    { name: 'Daisy', color: 'rgb(78, 237, 229)' },
-    { name: 'Elliot', color: 'rgb(93, 98, 245)' },
-    { name: 'Cassie', color: 'rgb(189, 109, 242)' },
-    { name: 'Lewis', color: 'rgb(250, 151, 75)' }
+    { name: 'Daisy', color: 'rgb(78, 237, 229)', r: 78, g: 237, b: 229 },
+    { name: 'Elliot', color: 'rgb(93, 98, 245)', r: 93, g: 98, b: 245 },
+    { name: 'Cassie', color: 'rgb(189, 109, 242)', r: 189, g: 109, b: 242 },
+    { name: 'Lewis', color: 'rgb(250, 151, 75)', r: 250, g: 151, b: 75 }
 ];
 
 function init() {
@@ -67,26 +82,12 @@ function init() {
             velocity: { x: 0, y: 0 },
             brightness: 1,
             color: member.color,
+            r: member.r,
+            g: member.g,
+            b: member.b,
             name: member.name,
-            size: FAMILY_PARTICLE_SIZE,
-            // Fancy planet properties
-            baseGlowIntensity: 0.3 + Math.random() * 0.4, // 0.3 to 0.7
-            pulseSpeed: 0.01 + Math.random() * 0.02, // 0.01 to 0.03
-            pulsePhase: Math.random() * Math.PI * 2, // Random starting phase
-            pulseAmplitude: 0.3 + Math.random() * 0.4, // How much the glow varies
-            orbitSpeed: (Math.random() - 0.5) * 0.0002, // Very slow drift
-            orbitRadius: 2 + Math.random() * 3, // Small orbital movement
-            orbitPhase: Math.random() * Math.PI * 2,
-            baseX: 0, // Will be set after positioning
-            baseY: 0, // Will be set after positioning
-            colorPulseSpeed: 0.005 + Math.random() * 0.01,
-            colorPulsePhase: Math.random() * Math.PI * 2
+            size: FAMILY_PARTICLE_SIZE
         };
-        
-        // Set base position for orbital movement
-        particle.baseX = particle.x;
-        particle.baseY = particle.y;
-        
         particles.push(particle);
         familyParticles.push(particle); // Add to family array
     });
@@ -105,6 +106,7 @@ function init() {
     }
 
     console.log(`Initialized ${particles.length} particles on canvas ${canvas.width}x${canvas.height} (logical: ${canvas.width/dpr}x${canvas.height/dpr})`);
+    console.log(`Device: ${isMobile ? 'Mobile' : 'Desktop'}, Particles: ${particleCount}`);
 
     window.addEventListener('resize', resizeCanvas);
     canvas.addEventListener('mousedown', onInteractionStart);
@@ -146,12 +148,6 @@ function resizeCanvas() {
         particle.y = Math.random() * visibleHeight;
         particle.state = 'free';
         particle.velocity = { x: 0, y: 0 };
-        
-        // Update base position for family particles
-        if (particle.name) {
-            particle.baseX = particle.x;
-            particle.baseY = particle.y;
-        }
     });
 }
 
@@ -290,7 +286,7 @@ function attractParticles() {
     // Early exit if no particles should be attracted
     if (maxParticlesToAttract === 0) return;
 
-    // Use a more efficient approach: only check particles within a rough bounding box first
+    // Use squared radius for distance comparisons (avoids sqrt)
     const radiusSquared = currentRadius * currentRadius;
     const boundingBox = {
         left: mouse.x - currentRadius,
@@ -310,7 +306,7 @@ function attractParticles() {
             continue;
         }
 
-        // More expensive distance calculation only for particles in bounding box
+        // Squared distance calculation (no sqrt needed)
         const dx = particle.x - mouse.x;
         const dy = particle.y - mouse.y;
         const distanceSquared = dx * dx + dy * dy;
@@ -328,13 +324,15 @@ function flickParticles() {
         y: mouse.y - prevMouse.y
     };
 
+    // Pre-calculate squared threshold
+    const flickThreshold = FLICK_DISTANCE_THRESHOLD * FLICK_DISTANCE_THRESHOLD;
+
     particles.forEach(particle => {
         if (particle.state !== 'attracted') return;
 
         const dx = particle.x - mouse.x;
         const dy = particle.y - mouse.y;
         const distanceSquared = dx * dx + dy * dy;
-        const flickThreshold = FLICK_DISTANCE_THRESHOLD * FLICK_DISTANCE_THRESHOLD;
 
         if (distanceSquared <= flickThreshold) {
             const angle = Math.atan2(mouseVelocity.y, mouseVelocity.x) + (Math.random() - 0.5) * Math.PI / 9;
@@ -348,7 +346,37 @@ function flickParticles() {
     });
 }
 
-function updateAndRender() {
+function updateAndRender(currentTime) {
+    // Adaptive frame rate control
+    const deltaTime = currentTime - lastFrameTime;
+    
+    // Performance monitoring every 60 frames
+    frameCount++;
+    if (frameCount === 1) {
+        performanceMonitorTime = currentTime;
+    } else if (frameCount >= 60) {
+        const avgFrameTime = (currentTime - performanceMonitorTime) / 60;
+        
+        // If we're consistently over 20ms per frame on mobile, enable frame skipping
+        if (isMobile && avgFrameTime > 20) {
+            adaptiveFrameSkip = true;
+            currentFrameInterval = 1000 / 45; // Reduce to 45fps
+        } else if (isMobile && avgFrameTime < 14) {
+            adaptiveFrameSkip = false;
+            currentFrameInterval = baseFrameInterval; // Back to 60fps
+        }
+        
+        frameCount = 0;
+    }
+    
+    // Apply frame limiting only if performance requires it
+    if (adaptiveFrameSkip && deltaTime < currentFrameInterval) {
+        requestAnimationFrame(updateAndRender);
+        return;
+    }
+    
+    lastFrameTime = currentTime;
+
     // Clear the entire logical canvas area
     ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
@@ -382,12 +410,6 @@ function updateParticle(particle) {
     if (particle.state === 'attracted') {
         particle.x += (mouse.x - particle.x) * ATTRACTION_SPEED;
         particle.y += (mouse.y - particle.y) * ATTRACTION_SPEED;
-        
-        // Update base position for family particles when being moved
-        if (particle.name) {
-            particle.baseX = particle.x;
-            particle.baseY = particle.y;
-        }
     } else if (particle.state === 'flicked') {
         // Update position
         particle.x += particle.velocity.x;
@@ -396,12 +418,6 @@ function updateParticle(particle) {
         // Constrain to canvas with buffer (working in logical coordinates)
         particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
         particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
-
-        // Update base position for family particles when being moved
-        if (particle.name) {
-            particle.baseX = particle.x;
-            particle.baseY = particle.y;
-        }
 
         // Bounce off edges
         if (particle.x <= EDGE_BUFFER || particle.x >= canvasLogicalWidth - EDGE_BUFFER) {
@@ -416,34 +432,20 @@ function updateParticle(particle) {
         particle.velocity.y *= dragFactor;
 
         // If particle has slowed down significantly, set it free
-        if (Math.abs(particle.velocity.x) < VELOCITY_THRESHOLD && Math.abs(particle.velocity.y) < VELOCITY_THRESHOLD) {
+        const velocityMagnitudeSquared = particle.velocity.x * particle.velocity.x + particle.velocity.y * particle.velocity.y;
+        if (velocityMagnitudeSquared < VELOCITY_THRESHOLD_SQUARED) {
             particle.state = 'free';
             particle.velocity = { x: 0, y: 0 };
         }
     } else {
         // Free particles
         if (particle.name) {
-            // Family particles - fancy orbital movement and effects
-            particle.orbitPhase += particle.orbitSpeed;
-            particle.pulsePhase += particle.pulseSpeed;
-            particle.colorPulsePhase += particle.colorPulseSpeed;
-            
-            // Gentle orbital drift around base position
-            const orbitX = Math.cos(particle.orbitPhase) * particle.orbitRadius;
-            const orbitY = Math.sin(particle.orbitPhase * 1.3) * particle.orbitRadius; // Different frequency for interesting patterns
-            
-            particle.x = particle.baseX + orbitX;
-            particle.y = particle.baseY + orbitY;
-            
-            // Keep within canvas bounds
-            particle.x = Math.max(EDGE_BUFFER + particle.orbitRadius, 
-                                Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER - particle.orbitRadius));
-            particle.y = Math.max(EDGE_BUFFER + particle.orbitRadius, 
-                                Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER - particle.orbitRadius));
-            
-            // Update base position if we hit boundaries
-            particle.baseX = particle.x - orbitX;
-            particle.baseY = particle.y - orbitY;
+            // Family particles - simple drift like regular particles
+            particle.x += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
+            particle.y += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
+            // Constrain particles within the canvas with buffer (working in logical coordinates)
+            particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
+            particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
         } else {
             // Regular star particles - keep original behavior
             particle.x += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
@@ -463,79 +465,31 @@ function updateParticle(particle) {
 
 function drawParticle(particle) {
     if (particle.name) {
-        // Family member particle with fancy effects
+        // Family member particle - simple colored circle with basic glow
+        const r = particle.r;
+        const g = particle.g;
+        const b = particle.b;
         
-        // Calculate pulsing glow intensity
-        const pulseValue = Math.sin(particle.pulsePhase);
-        const currentGlowIntensity = particle.baseGlowIntensity + (pulseValue * particle.pulseAmplitude);
-        
-        // Calculate pulsing size
-        const sizePulse = 1 + (pulseValue * 0.15); // 15% size variation
-        const currentSize = particle.size * sizePulse;
-        const bloomRadius = currentSize + BLOOM_RADIUS_OFFSET * currentGlowIntensity;
-        
-        // Calculate color breathing effect
-        const colorPulse = Math.sin(particle.colorPulsePhase);
-        const saturationMultiplier = 0.85 + (colorPulse * 0.15); // Subtle color breathing
-        
-        // Parse and enhance the RGB values with error handling
-        let r = 255, g = 255, b = 255; // Default to white if parsing fails
-        try {
-            const rgbMatch = particle.color.match(/\d+/g);
-            if (rgbMatch && rgbMatch.length >= 3) {
-                r = Math.floor(parseInt(rgbMatch[0]) * saturationMultiplier);
-                g = Math.floor(parseInt(rgbMatch[1]) * saturationMultiplier);
-                b = Math.floor(parseInt(rgbMatch[2]) * saturationMultiplier);
-            }
-        } catch (error) {
-            console.warn('Failed to parse particle color:', particle.color, error);
-        }
-        
-        const enhancedColor = `rgb(${r}, ${g}, ${b})`;
-        
-        // Create pulsing gradient with multiple layers for more depth
+        // Simple glow effect - just one gradient
+        const glowRadius = particle.size + 3;
         const gradient = ctx.createRadialGradient(
             particle.x, particle.y, 0,
-            particle.x, particle.y, bloomRadius
+            particle.x, particle.y, glowRadius
         );
-        
-        // Inner bright core
-        gradient.addColorStop(0, enhancedColor);
-        gradient.addColorStop(0.2, `rgba(${r}, ${g}, ${b}, ${0.9 * currentGlowIntensity})`);
-        gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${0.4 * currentGlowIntensity})`);
-        gradient.addColorStop(0.8, `rgba(${r}, ${g}, ${b}, ${0.1 * currentGlowIntensity})`);
+        gradient.addColorStop(0, `rgb(${r}, ${g}, ${b})`);
+        gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, 0.3)`);
         gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
 
-        // Draw the outer glow
+        // Draw glow
         ctx.beginPath();
-        ctx.arc(particle.x, particle.y, bloomRadius, 0, Math.PI * 2);
+        ctx.arc(particle.x, particle.y, glowRadius, 0, Math.PI * 2);
         ctx.fillStyle = gradient;
         ctx.fill();
         
-        // Add a second, smaller intense glow for extra sparkle
-        const innerGlow = ctx.createRadialGradient(
-            particle.x, particle.y, 0,
-            particle.x, particle.y, currentSize * 1.5
-        );
-        innerGlow.addColorStop(0, `rgba(${r + 20}, ${g + 20}, ${b + 20}, ${0.8 * currentGlowIntensity})`);
-        innerGlow.addColorStop(0.6, `rgba(${r}, ${g}, ${b}, ${0.3 * currentGlowIntensity})`);
-        innerGlow.addColorStop(1, 'transparent');
-        
+        // Draw solid core
         ctx.beginPath();
-        ctx.arc(particle.x, particle.y, currentSize * 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = innerGlow;
-        ctx.fill();
-
-        // Draw the solid core with slight transparency for depth
-        ctx.beginPath();
-        ctx.arc(particle.x, particle.y, currentSize, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.95)`;
-        ctx.fill();
-        
-        // Add a bright center highlight
-        ctx.beginPath();
-        ctx.arc(particle.x, particle.y, currentSize * 0.4, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${Math.min(255, r + 40)}, ${Math.min(255, g + 40)}, ${Math.min(255, b + 40)}, 0.6)`;
+        ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
         ctx.fill();
         
     } else {
