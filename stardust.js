@@ -1,49 +1,49 @@
-// Device detection
+// Quick check: treat this as "mobile" when touch is available or UA looks mobile
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
     || ('ontouchstart' in window) 
     || (navigator.maxTouchPoints > 0);
 
-// Configuration constants - optimized for device type
-const particleCount = isMobile ? 3000 : 5000; // Further reduced particle count for mobile
-const BASE_INTERACTION_RADIUS = isMobile ? 10 : 15; // Smaller interaction radius on mobile
-const maxInteractionTime = 10000; // 10 seconds in milliseconds
+// Config — tweak these values depending on mobile vs desktop
+const particleCount = isMobile ? 3000 : 5000; // keep particle count lower on phones
+const BASE_INTERACTION_RADIUS = isMobile ? 10 : 15; // smaller reach for touch devices
+const maxInteractionTime = 10000; // max interaction length (ms)
 const dragFactor = 0.98;
 const flickSpeed = 5;
-const EDGE_BUFFER = 1; // 1px buffer from edges
+const EDGE_BUFFER = 1; // tiny buffer so particles don't hug the exact edge (px)
 const ATTRACTION_SPEED = 0.1;
-const PARTICLE_DRIFT_SPEED = isMobile ? 0.004 : 0.005; // Slightly reduced drift on mobile
+const PARTICLE_DRIFT_SPEED = isMobile ? 0.004 : 0.005; // subtle drift; a touch lower on mobile
 const FLICK_DISTANCE_THRESHOLD = 5;
 const VELOCITY_THRESHOLD = 0.1;
 const VELOCITY_THRESHOLD_SQUARED = VELOCITY_THRESHOLD * VELOCITY_THRESHOLD;
 const FAMILY_PARTICLE_SIZE = 4;
 const REGULAR_PARTICLE_SIZE = 1;
-const TOUCH_BUFFER = 5; // Extra tolerance for touch events
+const TOUCH_BUFFER = 5; // extra leeway when dealing with touch input
 const ATTRACTION_PERCENTAGE = 0.001;
 
-// Runtime variables
+// Runtime state (mutable)
 let interactionRadius = BASE_INTERACTION_RADIUS;
 let mouse = { x: 0, y: 0 };
 let prevMouse = { x: 0, y: 0 };
 let isInteracting = false;
 let interactionStartTime = 0;
 
-// Adaptive frame rate control
+// Simple performance-based frame adaptation
 let lastFrameTime = 0;
 let frameCount = 0;
 let performanceMonitorTime = 0;
 let adaptiveFrameSkip = false;
 
-// Start with full frame rate, adapt based on performance
+// Start at 60fps and relax if device can't keep up
 const baseFrameInterval = 1000 / 60; // Target 60fps initially
 let currentFrameInterval = baseFrameInterval;
 
 let particles = [];
-let familyParticles = []; // Array to store family particles separately
+let familyParticles = []; // family members kept in a small separate list
 let canvas, ctx;
-let bgCanvas, bgCtx; // background canvas and context for dithered gradient
-let dpr, scale;  // Device pixel ratio and scale
+let bgCanvas, bgCtx; // separate background canvas used for a dithered gradient
+let dpr, scale;  // devicePixelRatio and derived scale
 
-// Define family members' colors with pre-parsed RGB values
+// My family colours — saved here with parsed RGB for drawing
 const familyColors = [
     { name: 'Daisy', color: 'rgb(78, 237, 229)', r: 78, g: 237, b: 229 },
     { name: 'Elliot', color: 'rgb(93, 98, 245)', r: 93, g: 98, b: 245 },
@@ -68,20 +68,20 @@ function init() {
         return;
     }
 
-    // Get the device pixel ratio and scale
+    // Figure out device pixel ratio and scale (for crisp drawing)
     dpr = window.devicePixelRatio || 1;
     scale = 1 / dpr;
 
     resizeCanvas();
 
-    // Create the dithered background once (resizeCanvas will also recreate on window resize)
+    // Build the dithered background now (resize will also rebuild)
     if (bgCtx) createDitheredBackground();
 
-    // Clear the particles arrays first
+    // Reset particle arrays before creating new ones
     particles = [];
     familyParticles = [];
 
-    // Create family member particles
+    // Spawn one particle per family member (kept on top)
     familyColors.forEach(member => {
         const particle = {
             x: Math.random() * (canvas.width / dpr),
@@ -97,10 +97,10 @@ function init() {
             size: FAMILY_PARTICLE_SIZE
         };
         particles.push(particle);
-        familyParticles.push(particle); // Add to family array
+    familyParticles.push(particle); // keep a separate handle for family particles
     });
 
-    // Create remaining particles
+    // Fill the rest of the system with regular (white) stars
     for (let i = 0; i < particleCount - familyColors.length; i++) {
         particles.push({
             x: Math.random() * (canvas.width / dpr),
@@ -124,45 +124,45 @@ function init() {
     canvas.addEventListener('touchend', onInteractionEnd);
     canvas.addEventListener('touchmove', onTouchMove);
 
-    // Start the animation loop
+    // Kick off the animation loop
     requestAnimationFrame(updateAndRender);
 }
 
 function resizeCanvas() {
-    if (!canvas || !ctx) return; // Safety check
+    if (!canvas || !ctx) return; // bail if canvas/context missing
     
-    // Get the visible viewport dimensions
+    // Measure the visible viewport for sizing the canvases
     const visibleWidth = document.documentElement.clientWidth;
     const visibleHeight = window.innerHeight;
 
-    // Set canvas size accounting for device pixel ratio and visible area
+    // Size the canvas in physical pixels, based on DPR
     canvas.width = visibleWidth * dpr;
     canvas.height = visibleHeight * dpr;
     
-    // Scale the canvas back down with CSS
+    // Use CSS to preserve logical pixel size while using a high-res backing
     canvas.style.width = `${visibleWidth}px`;
     canvas.style.height = `${visibleHeight}px`;
 
-    // Resize background canvas (physical pixels) and style
+    // Resize the background canvas and redraw its dithered image
     if (bgCanvas && bgCtx) {
         bgCanvas.width = visibleWidth * dpr;
         bgCanvas.height = visibleHeight * dpr;
         bgCanvas.style.width = `${visibleWidth}px`;
         bgCanvas.style.height = `${visibleHeight}px`;
-        // Clear any transforms for direct imageData writes
+    // Ensure no transforms are active before writing pixel data
         bgCtx.setTransform(1, 0, 0, 1, 0, 0);
-        // Recreate the dithered background for the new size
+    // Recreate the dithered background for the new dimensions
         createDitheredBackground();
     }
 
-    // Reset and scale the context to ensure correct drawing operations
+    // Reset transform and scale the drawing context for DPR
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset any previous transformations
     ctx.scale(dpr, dpr);
 
-    // Adjust interaction radius for high DPI (but store it in logical pixels for consistency)
+    // Keep the interaction radius in logical pixels (reset after resize)
     interactionRadius = BASE_INTERACTION_RADIUS;
 
-    // Reposition particles within the new logical canvas area
+    // Scatter particles across the new logical canvas area
     particles.forEach(particle => {
         particle.x = Math.random() * visibleWidth;
         particle.y = Math.random() * visibleHeight;
@@ -171,7 +171,7 @@ function resizeCanvas() {
     });
 }
 
-// Ordered Bayer 8x8 matrix (values 0..63)
+// Ordered Bayer 8x8 matrix for cheap ordered dithering (values 0..63)
 const BAYER8 = [
     [0,48,12,60,3,51,15,63],
     [32,16,44,28,35,19,47,31],
@@ -183,28 +183,28 @@ const BAYER8 = [
     [42,26,38,22,41,25,37,21]
 ];
 
-// Create a dithered vertical gradient on the background canvas using ordered dithering.
+// Make a dithered vertical gradient texture using the ordered Bayer matrix.
 function createDitheredBackground() {
     if (!bgCanvas || !bgCtx) return;
 
-    const width = bgCanvas.width;   // physical pixels
-    const height = bgCanvas.height; // physical pixels
+    const width = bgCanvas.width;   // physical pixels (backing)
+    const height = bgCanvas.height; // physical pixels (backing)
 
-    // Colors: darker at top -> lighter at bottom (t in [0,1])
+    // Gradient base colours — dark at the top, lighter down below
     const top = { r: 3, g: 1, b: 21 };    // similar to existing background (#030115)
     const bottom = { r: 30, g: 35, b: 70 }; // lighter bluish at bottom
 
-    // Number of quantization levels per channel (old-school look)
+    // Small number of levels for that retro, banded look
     const LEVELS = 8;
 
     const data = bgCtx.createImageData(width, height);
     const pixels = data.data;
 
     for (let y = 0; y < height; y++) {
-        // Normalized vertical position: 0 at top, 1 at bottom
+    // t: 0 at top, 1 at bottom for vertical interpolation
         const t = y / (height - 1 || 1);
 
-        // Interpolate base color at this row
+    // Compute the base RGB for this scanline
         const baseR = top.r * (1 - t) + bottom.r * t;
         const baseG = top.g * (1 - t) + bottom.g * t;
         const baseB = top.b * (1 - t) + bottom.b * t;
@@ -212,10 +212,10 @@ function createDitheredBackground() {
         for (let x = 0; x < width; x++) {
             const idx = (y * width + x) * 4;
 
-            // Ordered dither threshold from Bayer matrix normalized to [0,1)
+            // Threshold from Bayer matrix (0..1)
             const threshold = BAYER8[y & 7][x & 7] / 64;
 
-            // For each channel, quantize with ordered dither
+            // Quantize each channel using the threshold
             const qR = quantizeWithThreshold(baseR, LEVELS, threshold);
             const qG = quantizeWithThreshold(baseG, LEVELS, threshold);
             const qB = quantizeWithThreshold(baseB, LEVELS, threshold);
@@ -227,12 +227,12 @@ function createDitheredBackground() {
         }
     }
 
-    // Put the generated image (physical pixels) directly onto the bg canvas
+    // Copy the generated pixel data to the background canvas
     bgCtx.putImageData(data, 0, 0);
 }
 
 function quantizeWithThreshold(value, levels, threshold) {
-    // value is in 0..255; convert to 0..1
+    // Input is 0..255; normalize to 0..1 for quantization math
     const norm = Math.max(0, Math.min(1, value / 255));
     const scaled = norm * (levels - 1);
     const base = Math.floor(scaled);
@@ -243,9 +243,9 @@ function quantizeWithThreshold(value, levels, threshold) {
 }
 
 function onInteractionStart(event) {
-    // Check if it's a touch event
+    // Is this a touch event? Handle touches a bit differently
     if (event.touches && event.touches.length > 0) {
-        // For touch events, only prevent default if the touch is within bounds
+    // For touches: only steal the event if the touch was over the canvas
         const rect = canvas.getBoundingClientRect();
         const touch = event.touches[0];
         const rawX = (touch.clientX - rect.left) * dpr;
@@ -260,7 +260,7 @@ function onInteractionStart(event) {
             flickParticles();
         }
     } else if (event.clientX !== undefined && event.clientY !== undefined) {
-        // For mouse events, keep the original behavior
+    // For mouse: behave similarly but using clientX/Y
         event.preventDefault();
         isInteracting = true;
         interactionStartTime = Date.now();
@@ -271,10 +271,10 @@ function onInteractionStart(event) {
 }
 
 function onInteractionEnd(event) {
-    event.preventDefault(); // Prevent default touch behavior
+    event.preventDefault(); // prevent native scroll/selection while interacting
     isInteracting = false;
     interactionStartTime = 0;
-    interactionRadius = BASE_INTERACTION_RADIUS; // Reset to initial radius in logical pixels
+    interactionRadius = BASE_INTERACTION_RADIUS; // reset any expanded radius
 }
 
 function onMouseMove(event) {
@@ -292,7 +292,7 @@ function onTouchMove(event) {
         updateTouchPosition(event);
         flickParticles();
     } else if (!event.touches || event.touches.length === 0) {
-        // If touches array is empty or undefined, end interaction
+    // If no touches, stop interacting
         isInteracting = false;
         interactionStartTime = 0;
     }
@@ -300,7 +300,7 @@ function onTouchMove(event) {
 
 function isPositionInBounds(x, y) {
     const buffer = EDGE_BUFFER * dpr;
-    const touchBuffer = TOUCH_BUFFER * dpr; // Add extra tolerance for touch events
+    const touchBuffer = TOUCH_BUFFER * dpr; // add a little slack for touch precision
     
     return x >= (buffer - touchBuffer) && 
            x <= (canvas.width - buffer + touchBuffer) && 
@@ -319,12 +319,12 @@ function updateMousePosition(event) {
     const rawX = event.clientX - rect.left;
     const rawY = event.clientY - rect.top;
     
-    // Only update mouse position if it's within bounds
+    // Update mouse only if it's inside the canvas area
     if (rawX >= 0 && rawX <= rect.width && rawY >= 0 && rawY <= rect.height) {
         mouse.x = constrainToCanvas(rawX, canvas.width);
         mouse.y = constrainToCanvas(rawY, canvas.height);
     } else {
-        // If mouse goes out of bounds, end the interaction
+    // If the pointer leaves the canvas, cancel the interaction
         isInteracting = false;
         interactionStartTime = 0;
     }
@@ -335,11 +335,11 @@ function updateTouchPosition(event) {
         const rect = canvas.getBoundingClientRect();
         const touch = event.touches[0];
         
-        // Calculate position in logical canvas space
+    // Map touch coords into logical canvas space
         const rawX = touch.clientX - rect.left;
         const rawY = touch.clientY - rect.top;
         
-        // Add some tolerance for touch events
+    // Allow a small buffer so quick swipes near edges still register
         const touchBuffer = TOUCH_BUFFER;
         
         if (rawX >= -touchBuffer && 
@@ -347,11 +347,11 @@ function updateTouchPosition(event) {
             rawY >= -touchBuffer && 
             rawY <= rect.height + touchBuffer) {
             
-            // Constrain the actual position to within the canvas
+            // Clamp the pointer into the canvas' logical bounds
             mouse.x = constrainToCanvas(rawX, canvas.width);
             mouse.y = constrainToCanvas(rawY, canvas.height);
         } else {
-            // Touch went out of bounds, end interaction
+            // Touch moved away — stop interacting
             isInteracting = false;
             interactionStartTime = 0;
         }
@@ -362,10 +362,10 @@ function getDynamicInteractionRadius() {
     const elapsedTime = Math.min(Date.now() - interactionStartTime, maxInteractionTime);
     const progress = elapsedTime / maxInteractionTime;
 
-    // Calculate the max radius using logical pixels
+    // Compute a maximum interaction radius based on canvas size
     const maxRadius = Math.min(canvas.width / dpr, canvas.height / dpr) / 2;
 
-    // Return the radius in logical pixels
+    // Return the interaction radius in logical pixels
     return BASE_INTERACTION_RADIUS + (maxRadius - BASE_INTERACTION_RADIUS) * progress;
 }
 
@@ -374,10 +374,10 @@ function attractParticles() {
     const maxParticlesToAttract = Math.floor(particleCount * ATTRACTION_PERCENTAGE);
     let attractedCount = 0;
 
-    // Early exit if no particles should be attracted
+    // Nothing to do if attraction percentage is effectively zero
     if (maxParticlesToAttract === 0) return;
 
-    // Use squared radius for distance comparisons (avoids sqrt)
+    // Compare squared distances to avoid costly sqrt
     const radiusSquared = currentRadius * currentRadius;
     const boundingBox = {
         left: mouse.x - currentRadius,
@@ -391,13 +391,13 @@ function attractParticles() {
         
         if (particle.state !== 'free') continue;
 
-        // Quick bounding box check first
+    // Cheap bounding-box reject before exact distance check
         if (particle.x < boundingBox.left || particle.x > boundingBox.right ||
             particle.y < boundingBox.top || particle.y > boundingBox.bottom) {
             continue;
         }
 
-        // Squared distance calculation (no sqrt needed)
+    // Compute squared distance (still no sqrt)
         const dx = particle.x - mouse.x;
         const dy = particle.y - mouse.y;
         const distanceSquared = dx * dx + dy * dy;
@@ -415,7 +415,7 @@ function flickParticles() {
         y: mouse.y - prevMouse.y
     };
 
-    // Pre-calculate squared threshold
+    // Precompute a squared flick threshold
     const flickThreshold = FLICK_DISTANCE_THRESHOLD * FLICK_DISTANCE_THRESHOLD;
 
     particles.forEach(particle => {
@@ -438,17 +438,17 @@ function flickParticles() {
 }
 
 function updateAndRender(currentTime) {
-    // Adaptive frame rate control
+    // Adjust frame timing based on recent frame times
     const deltaTime = currentTime - lastFrameTime;
     
-    // Performance monitoring every 60 frames
+    // Check average frame time every 60 frames to detect slow devices
     frameCount++;
     if (frameCount === 1) {
         performanceMonitorTime = currentTime;
     } else if (frameCount >= 60) {
         const avgFrameTime = (currentTime - performanceMonitorTime) / 60;
         
-        // If we're consistently over 20ms per frame on mobile, enable frame skipping
+    // If it's struggling (mobile & >20ms/frame), reduce target fps
         if (isMobile && avgFrameTime > 20) {
             adaptiveFrameSkip = true;
             currentFrameInterval = 1000 / 45; // Reduce to 45fps
@@ -460,7 +460,7 @@ function updateAndRender(currentTime) {
         frameCount = 0;
     }
     
-    // Apply frame limiting only if performance requires it
+    // Skip drawing this frame if we're throttled and it's too soon
     if (adaptiveFrameSkip && deltaTime < currentFrameInterval) {
         requestAnimationFrame(updateAndRender);
         return;
@@ -468,19 +468,19 @@ function updateAndRender(currentTime) {
     
     lastFrameTime = currentTime;
 
-    // Clear the entire logical canvas area
+    // Clear the logical canvas for this frame
     ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
-    // Draw non-family particles first
+    // Draw all the regular stars first so family ones render on top
     particles.forEach(particle => {
         if (!particle.name) {
-            // Draw and update non-family particles
+            // Update & draw a regular particle
             updateParticle(particle);
             drawParticle(particle);
         }
     });
 
-    // Draw family particles on top
+    // Draw family members last so they appear above the rest
     familyParticles.forEach(particle => {
         updateParticle(particle);
         drawParticle(particle);
@@ -490,7 +490,7 @@ function updateAndRender(currentTime) {
         attractParticles();
     }
 
-    // Continue the animation loop
+    // Loop
     requestAnimationFrame(updateAndRender);
 }
 
@@ -502,15 +502,15 @@ function updateParticle(particle) {
         particle.x += (mouse.x - particle.x) * ATTRACTION_SPEED;
         particle.y += (mouse.y - particle.y) * ATTRACTION_SPEED;
     } else if (particle.state === 'flicked') {
-        // Update position
+    // Apply position update for flicked particles
         particle.x += particle.velocity.x;
         particle.y += particle.velocity.y;
 
-        // Constrain to canvas with buffer (working in logical coordinates)
+    // Clamp position to logical canvas (with a small buffer)
         particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
         particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
 
-        // Bounce off edges
+    // Bounce if it hits the edge
         if (particle.x <= EDGE_BUFFER || particle.x >= canvasLogicalWidth - EDGE_BUFFER) {
             particle.velocity.x *= -1;
         }
@@ -518,36 +518,36 @@ function updateParticle(particle) {
             particle.velocity.y *= -1;
         }
 
-        // Apply drag
+    // Gradually slow the particle
         particle.velocity.x *= dragFactor;
         particle.velocity.y *= dragFactor;
 
-        // If particle has slowed down significantly, set it free
+    // If it's nearly stopped, mark it free again
         const velocityMagnitudeSquared = particle.velocity.x * particle.velocity.x + particle.velocity.y * particle.velocity.y;
         if (velocityMagnitudeSquared < VELOCITY_THRESHOLD_SQUARED) {
             particle.state = 'free';
             particle.velocity = { x: 0, y: 0 };
         }
     } else {
-        // Free particles
+    // Behavior for free (idle) particles
         if (particle.name) {
-            // Family particles - simple drift like regular particles
+            // Family members drift gently
             particle.x += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
             particle.y += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
-            // Constrain particles within the canvas with buffer (working in logical coordinates)
+            // Keep them inside the visible area
             particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
             particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
         } else {
-            // Regular star particles - keep original behavior
+            // Regular stars: the original subtle random drift
             particle.x += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
             particle.y += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
-            // Constrain particles within the canvas with buffer (working in logical coordinates)
+            // Clamp regular stars inside the visible area
             particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
             particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
         }
     }
 
-    // Twinkling effect (only for non-family particles)
+    // Tiny brightness wiggle for twinkle (only non-family)
     if (!particle.name) {
         particle.brightness += (Math.random() - 0.5) * 0.1;
         particle.brightness = Math.max(0, Math.min(1, particle.brightness));
@@ -556,12 +556,12 @@ function updateParticle(particle) {
 
 function drawParticle(particle) {
     if (particle.name) {
-        // Family member particle - simple colored circle with basic glow
+    // Draw a family member: colored core plus soft glow
         const r = particle.r;
         const g = particle.g;
         const b = particle.b;
         
-        // Simple glow effect - just one gradient
+    // One radial gradient gives a simple glow
         const glowRadius = particle.size + 5;
         const gradient = ctx.createRadialGradient(
             particle.x, particle.y, 0,
@@ -571,20 +571,20 @@ function drawParticle(particle) {
         gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, 0.3)`);
         gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
 
-        // Draw glow
+    // Fill the glow
         ctx.beginPath();
         ctx.arc(particle.x, particle.y, glowRadius, 0, Math.PI * 2);
         ctx.fillStyle = gradient;
         ctx.fill();
         
-        // Draw solid core
+    // Draw the solid centre
         ctx.beginPath();
         ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
         ctx.fill();
         
     } else {
-        // Regular star particle - keep original simple rendering
+    // Regular star: small white dot with varying brightness
         ctx.beginPath();
         ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 255, 255, ${particle.brightness})`;

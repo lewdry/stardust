@@ -9,7 +9,7 @@ body, html {
     background-color: #030115;
 }
 
-/* Background canvas with pointer-events disabled so it doesn't block interactions */
+/* Background canvas - non-interactive, sits behind the stars */
 #stardust-bg {
     width: 100%;
     height: 100%;
@@ -17,11 +17,11 @@ body, html {
     position: fixed;
     top: 0;
     left: 0;
-    pointer-events: none; /* background only */
+    pointer-events: none; /* don't block pointer events */
     z-index: 0;
 }
 
-/* Main stardust canvas (particles + interactions) sits above the background */
+/* Top canvas: interactive particles and input */
 #stardust {
     width: 100%;
     height: 100%;
