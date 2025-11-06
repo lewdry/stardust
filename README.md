@@ -53,20 +53,5 @@ Key points:
 
 Where to tweak it
 - Colors: open `stardust.js` and edit the `top` and `bottom` color objects inside `createDitheredBackground()` to change the gradient endpoints.
-- Dither density: change the `LEVELS` constant in `createDitheredBackground()` (currently 16). Fewer levels = stronger retro banding; more levels = smoother gradient.
-- Dither algorithm: the code uses an ordered Bayer matrix for speed and a classic look. If you'd like error-diffusion (Floyd–Steinberg) instead, that can be added — it produces a different, softer dithering at higher CPU cost.
-
-How to test locally
-1. Serve the folder and open it in a browser (from the project root):
-```bash
-python3 -m http.server 8000
-```
-2. Visit `http://localhost:8000` and inspect the background. Resize the window to see the background regenerated.
-
-Notes
-- The starfield and interactions are unchanged and still render on the top canvas. The background canvas uses `pointer-events: none` so it won't block clicks or touches.
-- The dither is generated on resize to keep CPU usage low during animation; if you prefer continuously-recomputed backgrounds (animated gradients), I can add that option.
-
----
-
-*Created by [@lewdry](https://github.com/lewdry) - A digital playground among the stars* 🌟
+- Dither density: change the `LEVELS` constant in `createDitheredBackground()`. Fewer levels = stronger retro banding; more levels = smoother gradient.
+- Dither algorithm: the code uses an ordered Bayer matrix for speed and a classic look. 
