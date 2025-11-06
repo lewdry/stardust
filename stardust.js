@@ -15,7 +15,7 @@ const PARTICLE_DRIFT_SPEED = isMobile ? 0.004 : 0.005; // Slightly reduced drift
 const FLICK_DISTANCE_THRESHOLD = 5;
 const VELOCITY_THRESHOLD = 0.1;
 const VELOCITY_THRESHOLD_SQUARED = VELOCITY_THRESHOLD * VELOCITY_THRESHOLD;
-const FAMILY_PARTICLE_SIZE = 3;
+const FAMILY_PARTICLE_SIZE = 4;
 const REGULAR_PARTICLE_SIZE = 1;
 const TOUCH_BUFFER = 5; // Extra tolerance for touch events
 const ATTRACTION_PERCENTAGE = 0.001;
@@ -40,6 +40,7 @@ let currentFrameInterval = baseFrameInterval;
 let particles = [];
 let familyParticles = []; // Array to store family particles separately
 let canvas, ctx;
+let bgCanvas, bgCtx; // background canvas and context for dithered gradient
 let dpr, scale;  // Device pixel ratio and scale
 
 // Define family members' colors with pre-parsed RGB values
@@ -52,12 +53,16 @@ const familyColors = [
 
 function init() {
     canvas = document.getElementById('stardust');
+    bgCanvas = document.getElementById('stardust-bg');
     if (!canvas) {
         console.error('Canvas element not found');
         return;
     }
     
     ctx = canvas.getContext('2d');
+    if (bgCanvas) {
+        bgCtx = bgCanvas.getContext('2d');
+    }
     if (!ctx) {
         console.error('Failed to get 2D context');
         return;
@@ -68,6 +73,9 @@ function init() {
     scale = 1 / dpr;
 
     resizeCanvas();
+
+    // Create the dithered background once (resizeCanvas will also recreate on window resize)
+    if (bgCtx) createDitheredBackground();
 
     // Clear the particles arrays first
     particles = [];
@@ -135,6 +143,18 @@ function resizeCanvas() {
     canvas.style.width = `${visibleWidth}px`;
     canvas.style.height = `${visibleHeight}px`;
 
+    // Resize background canvas (physical pixels) and style
+    if (bgCanvas && bgCtx) {
+        bgCanvas.width = visibleWidth * dpr;
+        bgCanvas.height = visibleHeight * dpr;
+        bgCanvas.style.width = `${visibleWidth}px`;
+        bgCanvas.style.height = `${visibleHeight}px`;
+        // Clear any transforms for direct imageData writes
+        bgCtx.setTransform(1, 0, 0, 1, 0, 0);
+        // Recreate the dithered background for the new size
+        createDitheredBackground();
+    }
+
     // Reset and scale the context to ensure correct drawing operations
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset any previous transformations
     ctx.scale(dpr, dpr);
@@ -149,6 +169,77 @@ function resizeCanvas() {
         particle.state = 'free';
         particle.velocity = { x: 0, y: 0 };
     });
+}
+
+// Ordered Bayer 8x8 matrix (values 0..63)
+const BAYER8 = [
+    [0,48,12,60,3,51,15,63],
+    [32,16,44,28,35,19,47,31],
+    [8,56,4,52,11,59,7,55],
+    [40,24,36,20,43,27,39,23],
+    [2,50,14,62,1,49,13,61],
+    [34,18,46,30,33,17,45,29],
+    [10,58,6,54,9,57,5,53],
+    [42,26,38,22,41,25,37,21]
+];
+
+// Create a dithered vertical gradient on the background canvas using ordered dithering.
+function createDitheredBackground() {
+    if (!bgCanvas || !bgCtx) return;
+
+    const width = bgCanvas.width;   // physical pixels
+    const height = bgCanvas.height; // physical pixels
+
+    // Colors: darker at top -> lighter at bottom (t in [0,1])
+    const top = { r: 3, g: 1, b: 21 };    // similar to existing background (#030115)
+    const bottom = { r: 30, g: 35, b: 70 }; // lighter bluish at bottom
+
+    // Number of quantization levels per channel (old-school look)
+    const LEVELS = 8;
+
+    const data = bgCtx.createImageData(width, height);
+    const pixels = data.data;
+
+    for (let y = 0; y < height; y++) {
+        // Normalized vertical position: 0 at top, 1 at bottom
+        const t = y / (height - 1 || 1);
+
+        // Interpolate base color at this row
+        const baseR = top.r * (1 - t) + bottom.r * t;
+        const baseG = top.g * (1 - t) + bottom.g * t;
+        const baseB = top.b * (1 - t) + bottom.b * t;
+
+        for (let x = 0; x < width; x++) {
+            const idx = (y * width + x) * 4;
+
+            // Ordered dither threshold from Bayer matrix normalized to [0,1)
+            const threshold = BAYER8[y & 7][x & 7] / 64;
+
+            // For each channel, quantize with ordered dither
+            const qR = quantizeWithThreshold(baseR, LEVELS, threshold);
+            const qG = quantizeWithThreshold(baseG, LEVELS, threshold);
+            const qB = quantizeWithThreshold(baseB, LEVELS, threshold);
+
+            pixels[idx] = qR;
+            pixels[idx + 1] = qG;
+            pixels[idx + 2] = qB;
+            pixels[idx + 3] = 255;
+        }
+    }
+
+    // Put the generated image (physical pixels) directly onto the bg canvas
+    bgCtx.putImageData(data, 0, 0);
+}
+
+function quantizeWithThreshold(value, levels, threshold) {
+    // value is in 0..255; convert to 0..1
+    const norm = Math.max(0, Math.min(1, value / 255));
+    const scaled = norm * (levels - 1);
+    const base = Math.floor(scaled);
+    const frac = scaled - base;
+    const bumped = frac > threshold ? base + 1 : base;
+    const out = Math.round((bumped / (levels - 1)) * 255);
+    return out;
 }
 
 function onInteractionStart(event) {
@@ -471,7 +562,7 @@ function drawParticle(particle) {
         const b = particle.b;
         
         // Simple glow effect - just one gradient
-        const glowRadius = particle.size + 3;
+        const glowRadius = particle.size + 5;
         const gradient = ctx.createRadialGradient(
             particle.x, particle.y, 0,
             particle.x, particle.y, glowRadius
