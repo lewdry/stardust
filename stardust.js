@@ -22,6 +22,7 @@ const ATTRACTION_PERCENTAGE = 0.001;
 
 // Runtime state (mutable)
 let interactionRadius = BASE_INTERACTION_RADIUS;
+let resizeTimer;
 let mouse = { x: 0, y: 0 };
 let prevMouse = { x: 0, y: 0 };
 let isInteracting = false;
@@ -37,18 +38,24 @@ let adaptiveFrameSkip = false;
 const baseFrameInterval = 1000 / 60; // Target 60fps initially
 let currentFrameInterval = baseFrameInterval;
 
+// Pre-allocated brightness buckets (indices 0..10 map to brightness 0.0..1.0 in 0.1 steps).
+// Reused every frame to avoid per-frame Map allocation and GC pressure.
+const brightnessBuckets = Array.from({ length: 11 }, () => []);
+
 let particles = [];
+let attractedParticles = new Set(); // only the currently-attracted subset — keeps flickParticles O(attracted)
 let familyParticles = []; // family members kept in a small separate list
 let canvas, ctx;
 let bgCanvas, bgCtx; // separate background canvas used for a dithered gradient
 let dpr, scale;  // devicePixelRatio and derived scale
 
-// My family colours — saved here with parsed RGB for drawing
+// My family colours — each defined as a single rgb() string
 const familyColors = [
-    { name: 'Daisy', color: 'rgb(78, 237, 229)', r: 78, g: 237, b: 229 },
-    { name: 'Elliot', color: 'rgb(93, 98, 245)', r: 93, g: 98, b: 245 },
-    { name: 'Cassie', color: 'rgb(189, 109, 242)', r: 189, g: 109, b: 242 },
-    { name: 'Lewis', color: 'rgb(250, 151, 75)', r: 250, g: 151, b: 75 }
+    { name: 'Daisy',  color: 'rgb(78, 237, 216)' },
+    { name: 'Elliot', color: 'rgb(93, 98, 245)' },
+    { name: 'Cassie', color: 'rgb(187, 109, 242)' },
+    { name: 'Lewis',  color: 'rgb(250, 151, 75)' },
+    { name: 'Jude',   color: 'rgb(96, 237, 115)' }
 ];
 
 function init() {
@@ -83,16 +90,14 @@ function init() {
 
     // Spawn one particle per family member (kept on top)
     familyColors.forEach(member => {
+        const [r, g, b] = member.color.match(/\d+/g).map(Number);
         const particle = {
             x: Math.random() * (canvas.width / dpr),
             y: Math.random() * (canvas.height / dpr),
             state: 'free',
             velocity: { x: 0, y: 0 },
             brightness: 1,
-            color: member.color,
-            r: member.r,
-            g: member.g,
-            b: member.b,
+            r, g, b,
             name: member.name,
             size: FAMILY_PARTICLE_SIZE
         };
@@ -116,7 +121,10 @@ function init() {
     console.log(`Initialized ${particles.length} particles on canvas ${canvas.width}x${canvas.height} (logical: ${canvas.width/dpr}x${canvas.height/dpr})`);
     console.log(`Device: ${isMobile ? 'Mobile' : 'Desktop'}, Particles: ${particleCount}`);
 
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(resizeCanvas, 150);
+    });
     canvas.addEventListener('mousedown', onInteractionStart);
     canvas.addEventListener('mouseup', onInteractionEnd);
     canvas.addEventListener('mousemove', onMouseMove);
@@ -130,7 +138,11 @@ function init() {
 
 function resizeCanvas() {
     if (!canvas || !ctx) return; // bail if canvas/context missing
-    
+
+    // Capture previous logical dimensions before resizing (for proportional remap)
+    const prevW = canvas.width / dpr;
+    const prevH = canvas.height / dpr;
+
     // Measure the visible viewport for sizing the canvases
     const visibleWidth = document.documentElement.clientWidth;
     const visibleHeight = window.innerHeight;
@@ -162,13 +174,19 @@ function resizeCanvas() {
     // Keep the interaction radius in logical pixels (reset after resize)
     interactionRadius = BASE_INTERACTION_RADIUS;
 
-    // Scatter particles across the new logical canvas area
+    // Remap particles proportionally to the new canvas size (or scatter on first init)
     particles.forEach(particle => {
-        particle.x = Math.random() * visibleWidth;
-        particle.y = Math.random() * visibleHeight;
+        if (prevW > 0 && prevH > 0) {
+            particle.x = (particle.x / prevW) * visibleWidth;
+            particle.y = (particle.y / prevH) * visibleHeight;
+        } else {
+            particle.x = Math.random() * visibleWidth;
+            particle.y = Math.random() * visibleHeight;
+        }
         particle.state = 'free';
         particle.velocity = { x: 0, y: 0 };
     });
+    attractedParticles.clear(); // particles were force-reset to 'free', so the set must be emptied too
 }
 
 // Ordered Bayer 8x8 matrix for cheap ordered dithering (values 0..63)
@@ -191,11 +209,14 @@ function createDitheredBackground() {
     const height = bgCanvas.height; // physical pixels (backing)
 
     // Gradient base colours — dark at the top, lighter down below
-    const top = { r: 3, g: 1, b: 21 };    // similar to existing background (#030115)
-    const bottom = { r: 30, g: 35, b: 70 }; // lighter bluish at bottom
+    const topColor    = 'rgb(3, 1, 21)';    // similar to existing background (#030115)
+    const bottomColor = 'rgb(35, 42, 95)';  // noticeably lighter bluish at bottom
 
-    // Small number of levels for that retro, banded look
-    const LEVELS = 8;
+    const [topR, topG, topB]       = topColor.match(/\d+/g).map(Number);
+    const [bottomR, bottomG, bottomB] = bottomColor.match(/\d+/g).map(Number);
+
+    // Fewer levels = bigger steps = more visible dithering pattern
+    const LEVELS = 4;
 
     const data = bgCtx.createImageData(width, height);
     const pixels = data.data;
@@ -205,9 +226,9 @@ function createDitheredBackground() {
         const t = y / (height - 1 || 1);
 
     // Compute the base RGB for this scanline
-        const baseR = top.r * (1 - t) + bottom.r * t;
-        const baseG = top.g * (1 - t) + bottom.g * t;
-        const baseB = top.b * (1 - t) + bottom.b * t;
+        const baseR = topR * (1 - t) + bottomR * t;
+        const baseG = topG * (1 - t) + bottomG * t;
+        const baseB = topB * (1 - t) + bottomB * t;
 
         for (let x = 0; x < width; x++) {
             const idx = (y * width + x) * 4;
@@ -365,8 +386,9 @@ function getDynamicInteractionRadius() {
     // Compute a maximum interaction radius based on canvas size
     const maxRadius = Math.min(canvas.width / dpr, canvas.height / dpr) / 2;
 
-    // Return the interaction radius in logical pixels
-    return BASE_INTERACTION_RADIUS + (maxRadius - BASE_INTERACTION_RADIUS) * progress;
+    // Ease-out cubic: snaps open quickly on first click/tap, then settles gradually
+    const eased = 1 - Math.pow(1 - progress, 3);
+    return BASE_INTERACTION_RADIUS + (maxRadius - BASE_INTERACTION_RADIUS) * eased;
 }
 
 function attractParticles() {
@@ -404,6 +426,7 @@ function attractParticles() {
 
         if (distanceSquared <= radiusSquared) {
             particle.state = 'attracted';
+            attractedParticles.add(particle); // register in the fast-lookup set
             attractedCount++;
         }
     }
@@ -418,9 +441,8 @@ function flickParticles() {
     // Precompute a squared flick threshold
     const flickThreshold = FLICK_DISTANCE_THRESHOLD * FLICK_DISTANCE_THRESHOLD;
 
-    particles.forEach(particle => {
-        if (particle.state !== 'attracted') return;
-
+    // Iterate only the attracted subset — O(attracted) instead of O(all particles)
+    attractedParticles.forEach(particle => {
         const dx = particle.x - mouse.x;
         const dy = particle.y - mouse.y;
         const distanceSquared = dx * dx + dy * dy;
@@ -433,6 +455,7 @@ function flickParticles() {
                 y: Math.sin(angle) * speed
             };
             particle.state = 'flicked';
+            attractedParticles.delete(particle); // no longer attracted — remove from set
         }
     });
 }
@@ -471,14 +494,28 @@ function updateAndRender(currentTime) {
     // Clear the logical canvas for this frame
     ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
-    // Draw all the regular stars first so family ones render on top
+    // Update regular particles and batch-draw them grouped by brightness.
+    // Clear pre-allocated buckets (reuse arrays, no allocations).
+    for (let i = 0; i < brightnessBuckets.length; i++) brightnessBuckets[i].length = 0;
     particles.forEach(particle => {
-        if (!particle.name) {
-            // Update & draw a regular particle
-            updateParticle(particle);
-            drawParticle(particle);
-        }
+        if (particle.name) return;
+        updateParticle(particle);
+        const bucketIndex = Math.round(particle.brightness * 10); // 0..10
+        brightnessBuckets[bucketIndex].push(particle);
     });
+    for (let i = 0; i < brightnessBuckets.length; i++) {
+        const group = brightnessBuckets[i];
+        if (group.length === 0) continue;
+        const alpha = i / 10;
+        ctx.beginPath();
+        for (let j = 0; j < group.length; j++) {
+            const p = group[j];
+            ctx.moveTo(p.x + p.size, p.y);
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.fill();
+    }
 
     // Draw family members last so they appear above the rest
     familyParticles.forEach(particle => {
