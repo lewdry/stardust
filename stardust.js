@@ -4,21 +4,34 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
     || (navigator.maxTouchPoints > 0);
 
 // Config — tweak these values depending on mobile vs desktop
-const particleCount = isMobile ? 3000 : 5000; // keep particle count lower on phones
+const particleCount = 3000; // unified count; keeps GPU load manageable on all devices
 const BASE_INTERACTION_RADIUS = isMobile ? 10 : 15; // smaller reach for touch devices
 const maxInteractionTime = 10000; // max interaction length (ms)
 const dragFactor = 0.98;
 const flickSpeed = 5;
 const EDGE_BUFFER = 1; // tiny buffer so particles don't hug the exact edge (px)
 const ATTRACTION_SPEED = 0.1;
-const PARTICLE_DRIFT_SPEED = isMobile ? 0.004 : 0.005; // subtle drift; a touch lower on mobile
 const FLICK_DISTANCE_THRESHOLD = 5;
 const VELOCITY_THRESHOLD = 0.1;
 const VELOCITY_THRESHOLD_SQUARED = VELOCITY_THRESHOLD * VELOCITY_THRESHOLD;
-const FAMILY_PARTICLE_SIZE = 4;
+const FAMILY_PARTICLE_SIZE = 3;
 const REGULAR_PARTICLE_SIZE = 1;
 const TOUCH_BUFFER = 5; // extra leeway when dealing with touch input
 const ATTRACTION_PERCENTAGE = 0.001;
+
+// Pre-baked twinkle noise table — eliminates per-frame Math.random() calls.
+// 4096 entries, each in [-0.05, +0.05]. We cycle through sequentially and
+// wrap around, avoiding GC churn from repeated random number generation.
+const TWINKLE_TABLE_SIZE = 4096;
+const twinkleTable = new Float32Array(TWINKLE_TABLE_SIZE);
+for (let i = 0; i < TWINKLE_TABLE_SIZE; i++) {
+    twinkleTable[i] = (Math.random() - 0.5) * 0.1;
+}
+let twinkleIndex = 0;
+
+// Only update twinkle every N frames to further reduce CPU load.
+const TWINKLE_FRAME_SKIP = 3;
+let twinkleFrameCounter = 0;
 
 // Runtime state (mutable)
 let interactionRadius = BASE_INTERACTION_RADIUS;
@@ -34,7 +47,7 @@ let frameCount = 0;
 let performanceMonitorTime = 0;
 let adaptiveFrameSkip = false;
 
-// Start at 60fps and relax if device can't keep up
+// Start at 60fps and relax if device can't keep up (applies to ALL devices now)
 const baseFrameInterval = 1000 / 60; // Target 60fps initially
 let currentFrameInterval = baseFrameInterval;
 
@@ -75,8 +88,10 @@ function init() {
         return;
     }
 
-    // Figure out device pixel ratio and scale (for crisp drawing)
-    dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 1 — eliminates the 4× pixel fill-rate cost on Retina screens.
+    // The canvas looks identical at normal viewing distances but the GPU works
+    // much less hard. Remove the Math.min to restore native Retina sharpness.
+    dpr = Math.min(window.devicePixelRatio || 1, 1);
     scale = 1 / dpr;
 
     resizeCanvas();
@@ -464,20 +479,22 @@ function updateAndRender(currentTime) {
     // Adjust frame timing based on recent frame times
     const deltaTime = currentTime - lastFrameTime;
     
-    // Check average frame time every 60 frames to detect slow devices
+    // Check average frame time every 60 frames to detect slow devices.
+    // Adaptive throttling now applies to ALL devices, not just mobile.
     frameCount++;
     if (frameCount === 1) {
         performanceMonitorTime = currentTime;
     } else if (frameCount >= 60) {
         const avgFrameTime = (currentTime - performanceMonitorTime) / 60;
         
-    // If it's struggling (mobile & >20ms/frame), reduce target fps
-        if (isMobile && avgFrameTime > 20) {
+        if (avgFrameTime > 20) {
+            // Struggling (>20ms/frame) — drop to 45fps to relieve pressure
             adaptiveFrameSkip = true;
-            currentFrameInterval = 1000 / 45; // Reduce to 45fps
-        } else if (isMobile && avgFrameTime < 14) {
+            currentFrameInterval = 1000 / 45;
+        } else if (avgFrameTime < 14) {
+            // Comfortable (<14ms/frame) — step back up to 60fps
             adaptiveFrameSkip = false;
-            currentFrameInterval = baseFrameInterval; // Back to 60fps
+            currentFrameInterval = baseFrameInterval;
         }
         
         frameCount = 0;
@@ -488,6 +505,9 @@ function updateAndRender(currentTime) {
         requestAnimationFrame(updateAndRender);
         return;
     }
+
+    // Advance the twinkle frame counter (brightness only updates every N frames)
+    twinkleFrameCounter = (twinkleFrameCounter + 1) % TWINKLE_FRAME_SKIP;
     
     lastFrameTime = currentTime;
 
@@ -566,27 +586,23 @@ function updateParticle(particle) {
             particle.velocity = { x: 0, y: 0 };
         }
     } else {
-    // Behavior for free (idle) particles
+    // Behavior for free (idle) particles.
+    // Drift has been removed — free particles are truly static.
+    // This eliminates thousands of Math.random() calls per frame with no
+    // visible loss (the drift was so subtle it was imperceptible).
         if (particle.name) {
-            // Family members drift gently
-            particle.x += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
-            particle.y += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
-            // Keep them inside the visible area
-            particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
-            particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
-        } else {
-            // Regular stars: the original subtle random drift
-            particle.x += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
-            particle.y += (Math.random() - 0.5) * PARTICLE_DRIFT_SPEED;
-            // Clamp regular stars inside the visible area
+            // Family members: keep them clamped but don't drift
             particle.x = Math.max(EDGE_BUFFER, Math.min(particle.x, canvasLogicalWidth - EDGE_BUFFER));
             particle.y = Math.max(EDGE_BUFFER, Math.min(particle.y, canvasLogicalHeight - EDGE_BUFFER));
         }
+        // Regular stars: truly static — no per-frame update needed
     }
 
-    // Tiny brightness wiggle for twinkle (only non-family)
-    if (!particle.name) {
-        particle.brightness += (Math.random() - 0.5) * 0.1;
+    // Twinkle brightness update — only runs every TWINKLE_FRAME_SKIP frames
+    // and uses a pre-baked noise table instead of Math.random().
+    if (!particle.name && twinkleFrameCounter === 0) {
+        particle.brightness += twinkleTable[twinkleIndex];
+        twinkleIndex = (twinkleIndex + 1) & (TWINKLE_TABLE_SIZE - 1); // fast modulo via bitmask
         particle.brightness = Math.max(0, Math.min(1, particle.brightness));
     }
 }
